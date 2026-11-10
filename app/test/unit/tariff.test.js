@@ -91,3 +91,51 @@ test("a 45-minute classic ride costs 50 UAH", () => {
 test("a return before the pickup is rejected", () => {
   assert.throws(() => quote(ride("2026-09-16T08:00:00Z", "2026-09-16T07:00:00Z"), standard), QuoteError);
 });
+
+// T10 + T4 (docs/spec/tariffs.md:74, :141): a subscriber's 30-min classic night ride costs 0;
+// there is nothing to discount, so the quote has no discount lines at all — no zero "night" line.
+test("a night ride with nothing to pay has no night discount line", () => {
+  // 01:00–01:30 in Kyiv
+  const result = quote(ride("2026-09-16T01:00:00+03:00", "2026-09-16T01:30:00+03:00"), { type: "subscriber" });
+  assert.equal(result.timeCharge, 2500);
+  assert.deepEqual(result.discounts, [{ code: "subscription", amount: 2500 }]);
+  assert.equal(result.total, 0);
+});
+
+// T2 + T10: a false start at night — no time charge, so no discount lines either.
+test("a night false start has no discount lines", () => {
+  const result = quote(ride("2026-09-16T03:00:00+03:00", "2026-09-16T03:01:00+03:00"), standard);
+  assert.equal(result.timeCharge, 0);
+  assert.deepEqual(result.discounts, []);
+  assert.equal(result.total, 0);
+});
+
+// Section 4: a missing ride is refused with a QuoteError, not a TypeError from inside quote().
+test("a missing ride is refused with a QuoteError", () => {
+  for (const missing of [null, undefined]) {
+    assert.throws(() => quote(missing, standard), { name: "QuoteError", message: "ride is required" });
+  }
+});
+
+// Instants must carry Z or an offset (src/tariff.js header, AGENTS.md conventions):
+// without one Date.parse() would silently read the server's local time.
+test("a date-time without an offset is refused", () => {
+  const cases = [
+    ride("2026-09-16T10:00:00", "2026-09-16T10:30:00Z"),
+    ride("2026-09-16T10:00:00Z", "2026-09-16T10:30:00"),
+  ];
+  for (const r of cases) {
+    assert.throws(() => quote(r, standard), { name: "QuoteError", message: /must be an ISO 8601 date-time with an offset/ });
+  }
+});
+
+// A non-string instant is refused even when its string form looks like a valid date-time.
+test("a non-string date-time is refused", () => {
+  const cases = [
+    ride(["2026-09-16T10:00:00Z"], "2026-09-16T10:30:00Z"),
+    ride("2026-09-16T10:00:00Z", Date.parse("2026-09-16T10:30:00Z")),
+  ];
+  for (const r of cases) {
+    assert.throws(() => quote(r, standard), { name: "QuoteError", message: /must be an ISO 8601 date-time with an offset/ });
+  }
+});
